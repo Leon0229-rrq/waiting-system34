@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>じゃがバター順番待ち</title>
+    <style>
+        body { font-family: 'Helvetica Neue', 'Arial', sans-serif; margin: 0; padding: 20px; background-color: #f4f4f9; color: #333; line-height: 1.6; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { color: #4a4a4a; text-align: center; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        select { width: 100%; padding: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
+        button { width: 100%; padding: 12px; border: none; border-radius: 5px; background-color: #5cb85c; color: white; font-size: 18px; cursor: pointer; transition: background-color 0.3s ease; }
+        button:hover:enabled { background-color: #4cae4c; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .reservation-info { margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px; }
+        .reservation-info h2 { text-align: center; color: #555; }
+        .info-item { font-size: 18px; margin-bottom: 10px; }
+        .cancel-btn { background-color: #d9534f; margin-top: 10px; }
+        .cancel-btn:hover:enabled { background-color: #c9302c; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>3年3組 じゃがバター販売</h1>
+    <p>人数を選んで予約してください（最大3名まで）</p>
+
+    <div id="reservation-form">
+        <label for="people">予約人数：</label>
+        <select id="people">
+            <option value="1">1人</option>
+            <option value="2">2人</option>
+            <option value="3">3人</option>
+        </select>
+        <button id="reserve-btn">予約する</button>
+    </div>
+
+    <div id="reservation-info" class="reservation-info" style="display:none;">
+        <h2>あなたの予約情報</h2>
+        <div class="info-item">受付番号: <span id="my-reservation-number"></span></div>
+        <div class="info-item">おおよその待ち時間: <span id="my-waiting-time"></span></div>
+        <button class="cancel-btn" id="cancel-my-reservation-btn">予約をキャンセルする</button>
+    </div>
+</div>
+
+<script>
+    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw0FRTFCSI8XtRJclVE_pSdllP50l4WWN6h-Xx6lKl7GQ1JMKf_cOw3YVcxLs5PWARUMg/exec';
+    let myReservationNumber = null;
+    let isProcessing = false;
+
+    // ページ読み込み時に予約情報をチェック
+    window.onload = function() {
+        const storedNumber = localStorage.getItem('myReservationNumber');
+        if (storedNumber) {
+            myReservationNumber = parseInt(storedNumber);
+            document.getElementById('reservation-form').style.display = 'none';
+            document.getElementById('reservation-info').style.display = 'block';
+            updateDisplay();
+        }
+        // 10秒ごとに表示を更新
+        setInterval(updateDisplay, 10000);
+    };
+
+    // 予約ボタンのクリックイベント
+    document.getElementById('reserve-btn').addEventListener('click', function() {
+        if (isProcessing) return; // 処理中は重複送信を防ぐ
+
+        const people = document.getElementById('people').value;
+        const reserveBtn = this;
+        
+        isProcessing = true;
+        reserveBtn.disabled = true;
+        reserveBtn.textContent = '処理中...';
+
+        const formData = new FormData();
+        formData.append('action', 'reserve');
+        formData.append('people', people);
+
+        fetch(SCRIPT_URL, {
+            method: 'POST',
+            body: formData,
+        }).then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                myReservationNumber = data.reservationNumber;
+                localStorage.setItem('myReservationNumber', myReservationNumber);
+                alert('予約が完了しました！');
+                // 予約情報を表示
+                document.getElementById('reservation-form').style.display = 'none';
+                document.getElementById('reservation-info').style.display = 'block';
+                updateDisplay();
+            } else {
+                alert('予約に失敗しました。もう一度お試しください。');
+                reserveBtn.disabled = false;
+                reserveBtn.textContent = '予約する';
+            }
+        }).catch(error => {
+            console.error('予約エラー:', error);
+            alert('通信エラーが発生しました。');
+            reserveBtn.disabled = false;
+            reserveBtn.textContent = '予約する';
+        }).finally(() => {
+            isProcessing = false;
+        });
+    });
+
+    // 表示更新関数
+    async function updateDisplay() {
+        try {
+            const reservationResponse = await fetch(SCRIPT_URL, {
+                method: 'POST',
+                body: new URLSearchParams({ action: 'getReservations' }),
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            });
+            const reservationData = await reservationResponse.json();
+
+            if (reservationData.success && myReservationNumber) {
+                const reservations = reservationData.reservations;
+                const myReservation = reservations.find(r => r.reservationNumber === myReservationNumber);
+                let totalWaitingPeople = 0;
+                
+                if (myReservation) {
+                    const myIndex = reservations.findIndex(r => r.reservationNumber === myReservationNumber);
+                    for (let i = 0; i < myIndex; i++) {
+                        totalWaitingPeople += reservations[i].people;
+                    }
+                    
+                    document.getElementById('my-reservation-number').textContent = myReservationNumber;
+
+                    // 待ち時間ロジックの修正
+                    let waitingTime = 15;
+                    if (totalWaitingPeople > 19) {
+                        waitingTime = 30;
+                    } else if (totalWaitingPeople > 0) {
+                        waitingTime = Math.ceil(totalWaitingPeople / 19 * 15);
+                    }
+                    
+                    document.getElementById('my-waiting-time').textContent = `${waitingTime}分`;
+                } else {
+                    // 予約が見つからない場合、完了と判断してUIをリセット
+                    alert('受付番号' + myReservationNumber + 'の予約は完了しました。');
+                    clearMyReservation();
+                }
+            } else if (myReservationNumber) {
+                // 予約が見つからない場合も同様にリセット
+                clearMyReservation();
+            }
+        } catch (error) {
+            console.error('表示更新エラー:', error);
+        }
+    }
+
+    // 予約キャンセルボタンのクリックイベント
+    document.getElementById('cancel-my-reservation-btn').addEventListener('click', function() {
+        if (!confirm('本当に予約をキャンセルしますか？')) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'cancelReservation');
+        formData.append('reservationNumber', myReservationNumber);
+
+        fetch(SCRIPT_URL, {
+            method: 'POST',
+            body: formData,
+        }).then(() => {
+            alert('予約をキャンセルしました。');
+            clearMyReservation();
+        }).catch(error => {
+            console.error('キャンセルエラー:', error);
+            alert('キャンセルに失敗しました。');
+        });
+    });
+
+    // 予約情報のリセット関数
+    function clearMyReservation() {
+        localStorage.removeItem('myReservationNumber');
+        myReservationNumber = null;
+        document.getElementById('reservation-form').style.display = 'block';
+        document.getElementById('reservation-info').style.display = 'none';
+        // ページをリロードして初期状態に戻す
+        location.reload();
+    }
+</script>
+
+</body>
+</html>
